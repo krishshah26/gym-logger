@@ -28,6 +28,42 @@ body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antial
   min-height: 100vh;
 }
 
+.auth-screen {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-screen-container {
+  width: min(520px, 100%);
+  background: rgba(20, 20, 20, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-lg);
+  padding: 40px 32px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+}
+
+.auth-screen-logo {
+  font-size: 44px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.auth-screen-title {
+  font-size: 32px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.auth-screen-subtitle {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.6;
+  margin-bottom: 28px;
+  text-align: center;
+}
+
 /* ── Sidebar (desktop) ── */
 .sidebar {
   display: none;
@@ -343,6 +379,19 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .edit-form input { background: var(--elevated); border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text); font-family: inherit; font-size: 15px; padding: 12px 14px; outline: none; width: 100%; }
 .edit-form input:focus { border-color: var(--accent); }
 .edit-form-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* ── Modal ── */
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-content { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 0; max-width: 420px; width: calc(100% - 32px); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5); }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+.modal-header h2 { font-size: 18px; font-weight: 600; }
+.close-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 20px; padding: 4px; }
+.close-btn:hover { color: var(--text); }
+.modal-body { padding: 20px 24px; }
+.modal-body p { font-size: 15px; color: var(--text); margin-bottom: 12px; }
+.modal-body p:last-child { margin-bottom: 0; }
+.modal-subtitle { color: var(--muted); font-size: 14px; }
+.modal-footer { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 20px 24px; border-top: 1px solid var(--border); }
 
 /* ── Account ── */
 .auth-form { display: grid; gap: 10px; }

@@ -1,110 +1,38 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-
-const STORAGE_KEY = "gym-logger-v1";
-const SCHEDULE_KEY = "gym-schedule-v1";
-const env = typeof import.meta !== "undefined" && import.meta.env ? import.meta.env : {};
-const SUPABASE_URL = env.VITE_SUPABASE_URL || "";
-const SUPABASE_ANON_KEY = env.VITE_SUPABASE_ANON_KEY || "";
-const hasSupabase = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
-const supabase = hasSupabase ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-
-const defaultTemplates = [
-  { id: "t1", name: "Back + Biceps", exercises: ["Lat Pulldown", "Seated Row", "Single Arm Row", "Barbell Curl", "Hammer Curl"] },
-  { id: "t2", name: "Chest + Triceps", exercises: ["Bench Press", "Incline Dumbbell Press", "Cable Fly", "Triceps Pushdown", "Overhead Extension"] },
-  { id: "t3", name: "Legs", exercises: ["Squat", "Leg Press", "Leg Curl", "Leg Extension", "Calf Raise"] },
-  { id: "t4", name: "Shoulders + Abs", exercises: ["Shoulder Press", "Lateral Raise", "Rear Delt Fly", "Cable Crunch", "Leg Raise"] },
-  { id: "t5", name: "Arms + Abs", exercises: ["EZ Bar Curl", "Incline Curl", "Skull Crusher", "Rope Pushdown", "Cable Crunch"] },
-];
-
-const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-const DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-
-const todayKey = () => new Date().toISOString().slice(0, 10);
-const emptySet = () => ({ weight: "", reps: "" });
-
-function safeId() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-  return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-function getDefaultState() {
-  return { templates: defaultTemplates, workouts: [], activeWorkout: null };
-}
-function fmtDate(y, m, d) {
-  return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
-function getMonthGrid(year, month) {
-  const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const offset = (firstDay + 6) % 7; // Mon = 0
-  const cells = Array(offset).fill(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
-  return cells;
-}
-function createWorkoutFromTemplate(template) {
-  return {
-    id: safeId(), date: todayKey(), templateName: template.name, notes: "",
-    exercises: template.exercises.map((name) => ({ id: safeId(), name, sets: [emptySet(), emptySet(), emptySet()] })),
-  };
-}
-function loadLocalState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return getDefaultState();
-    const parsed = JSON.parse(raw);
-    return {
-      templates: Array.isArray(parsed.templates) && parsed.templates.length ? parsed.templates : defaultTemplates,
-      workouts: Array.isArray(parsed.workouts) ? parsed.workouts : [],
-      activeWorkout: parsed.activeWorkout ?? null,
-    };
-  } catch { return getDefaultState(); }
-}
-function saveLocalState(state) { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-function loadSchedule() {
-  try { const raw = localStorage.getItem(SCHEDULE_KEY); return raw ? JSON.parse(raw) : {}; }
-  catch { return {}; }
-}
-function mapTemplatesFromRows(rows) {
-  return rows.map((row) => ({ id: row.id, name: row.name, exercises: Array.isArray(row.exercises) ? row.exercises : [] }));
-}
-function mapWorkoutsFromRows(rows) {
-  return rows.map((row) => ({
-    id: row.id, date: row.date, templateName: row.template_name, notes: row.notes || "",
-    exercises: (Array.isArray(row.exercises) ? row.exercises : []).map((ex) => ({
-      id: ex.id || safeId(), name: ex.name,
-      sets: Array.isArray(ex.sets) && ex.sets.length ? ex.sets : [emptySet(), emptySet(), emptySet()],
-    })),
-  }));
-}
-function getLastExerciseStats(workouts, exerciseName) {
-  const sorted = [...workouts].sort((a, b) => (a.date < b.date ? 1 : -1));
-  for (const workout of sorted) {
-    const ex = workout.exercises.find((e) => e.name.toLowerCase() === exerciseName.toLowerCase());
-    if (ex) {
-      const sets = ex.sets.filter((s) => s.weight || s.reps);
-      if (sets.length) return { date: workout.date, sets };
-    }
-  }
-  return null;
-}
-
-const Icons = {
-  home: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
-  calendar: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
-  history: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
-  templates: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>,
-  account: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
-  back: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>,
-  chevLeft: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>,
-  chevRight: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>,
-  edit: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
-};
+import { supabase, hasSupabase } from "./services/supabase";
+import { useAuth } from "./context/AuthContext";
+import { SignInPromptModal } from "./components/Common/SignInPromptModal";
+import { Icons } from "./utils/icons";
+import {
+  DEFAULT_TEMPLATES,
+  MONTH_NAMES,
+  DAY_LABELS,
+  SCHEDULE_KEY,
+} from "./utils/constants";
+import {
+  todayKey,
+  emptySet,
+  safeId,
+  getDefaultState,
+  fmtDate,
+  getMonthGrid,
+  createWorkoutFromTemplate,
+  loadLocalState,
+  loadStoredLocalState,
+  hasLocalDataToMigrate,
+  saveLocalState,
+  loadSchedule,
+  mapTemplatesFromRows,
+  mapWorkoutsFromRows,
+  getLastExerciseStats,
+  migrateLocalDataToCloud,
+} from "./utils/helpers";
 
 export default function App() {
+  const { session, isGuest, loading: authLoading, startGuestMode, signOut: authSignOut } = useAuth();
+  
   const [state, setState] = useState(getDefaultState());
   const [schedule, setSchedule] = useState({});
-  const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState("");
@@ -114,6 +42,9 @@ export default function App() {
   const [templateName, setTemplateName] = useState("");
   const [templateExercises, setTemplateExercises] = useState("");
   const [screen, setScreen] = useState("home");
+  // Sign-in prompt modal state
+  const [showSignInPrompt, setShowSignInPrompt] = useState(false);
+  const [signInPromptAction, setSignInPromptAction] = useState("");
   // Calendar state
   const [calView, setCalView] = useState(() => {
     const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() };
@@ -130,53 +61,104 @@ export default function App() {
   useEffect(() => { setSchedule(loadSchedule()); }, []);
   useEffect(() => { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule)); }, [schedule]);
 
-  useEffect(() => {
-    const local = loadLocalState();
-    setState(local);
-    if (!supabase) {
-      setMessage("Offline mode — workouts save locally on this device.");
+  useEffect(() => { 
+    if (!isGuest && session) { 
+      hydrateFromCloud();
+    } else if (isGuest) {
+      // Load local data or default templates for guest mode
+      const localState = loadLocalState();
+      setState({
+        templates: localState.templates.length ? localState.templates : DEFAULT_TEMPLATES,
+        workouts: localState.workouts,
+        activeWorkout: null,
+      });
       setLoading(false);
-      return;
+    } else if (!session) {
+      setLoading(false);
     }
-    let active = true;
-    supabase.auth.getSession().then(async ({ data, error }) => {
-      if (!active) return;
-      if (error) { setMessage(error.message); setLoading(false); return; }
-      setSession(data.session ?? null);
-      if (data.session) { await hydrateFromCloud(); } else { setLoading(false); }
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
-      if (!active) return;
-      setSession(nextSession ?? null);
-      if (nextSession) { await hydrateFromCloud(); } else { setState(loadLocalState()); setLoading(false); }
-    });
-    return () => { active = false; subscription.unsubscribe(); };
-  }, []);
+  }, [session, isGuest]);
 
   useEffect(() => { saveLocalState(state); }, [state]);
 
   async function hydrateFromCloud() {
-    if (!supabase) return;
+    if (!supabase || !session) return;
     setLoading(true);
     const [{ data: templateRows, error: te }, { data: workoutRows, error: we }] = await Promise.all([
       supabase.from("workout_templates").select("id, name, exercises").order("created_at", { ascending: true }),
       supabase.from("workout_sessions").select("id, date, template_name, notes, exercises").order("date", { ascending: false }),
     ]);
     if (te || we) { setMessage(te?.message || we?.message || "Could not load cloud data."); setLoading(false); return; }
-    setState({
-      templates: templateRows?.length ? mapTemplatesFromRows(templateRows) : defaultTemplates,
-      workouts: workoutRows?.length ? mapWorkoutsFromRows(workoutRows) : [],
-      activeWorkout: null,
-    });
+    
+    const storedLocalState = loadStoredLocalState();
+    const localState = loadLocalState();
+    const cloudTemplates = templateRows?.length ? mapTemplatesFromRows(templateRows) : [];
+    const cloudWorkouts = workoutRows?.length ? mapWorkoutsFromRows(workoutRows) : [];
+    const shouldMigrate = hasLocalDataToMigrate(storedLocalState);
+
+    if (shouldMigrate) {
+      setMessage("Importing your local data to cloud...");
+      const { templatesCount, workoutsCount } = await migrateLocalDataToCloud(
+        supabase,
+        session,
+        localState,
+        cloudTemplates,
+        cloudWorkouts
+      );
+
+      const [{ data: updatedTemplateRows }, { data: updatedWorkoutRows }] = await Promise.all([
+        supabase.from("workout_templates").select("id, name, exercises").order("created_at", { ascending: true }),
+        supabase.from("workout_sessions").select("id, date, template_name, notes, exercises").order("date", { ascending: false }),
+      ]);
+
+      const migratedTemplates = updatedTemplateRows?.length ? mapTemplatesFromRows(updatedTemplateRows) : DEFAULT_TEMPLATES;
+      const migratedWorkouts = updatedWorkoutRows?.length ? mapWorkoutsFromRows(updatedWorkoutRows) : [];
+
+      setState({
+        templates: migratedTemplates,
+        workouts: migratedWorkouts,
+        activeWorkout: null,
+      });
+
+      if (templatesCount > 0 || workoutsCount > 0) {
+        setMessage(`✓ Imported ${workoutsCount} workout${workoutsCount !== 1 ? 's' : ''} and ${templatesCount} template${templatesCount !== 1 ? 's' : ''}`);
+      }
+    } else {
+      setState({
+        templates: cloudTemplates.length ? cloudTemplates : DEFAULT_TEMPLATES,
+        workouts: cloudWorkouts.length ? cloudWorkouts : [],
+        activeWorkout: null,
+      });
+    }
+    
     setLoading(false);
+  }
+
+  function requireSession(action = "perform this action") {
+    if (isGuest) {
+      setSignInPromptAction(action);
+      setShowSignInPrompt(true);
+      return false;
+    }
+    if (!session) {
+      setMessage(`Please sign in to ${action}.`);
+      return false;
+    }
+    return true;
+  }
+
+  function handleSignInFromPrompt() {
+    setShowSignInPrompt(false);
+    setScreen("account");
   }
 
   // ── Workout actions ──
   function startWorkout(template) {
+    if (!requireSession("start a workout")) return;
     setState((prev) => ({ ...prev, activeWorkout: createWorkoutFromTemplate(template) }));
     setScreen("workout");
   }
   function startWorkoutOnDate(templateId, date) {
+    if (!requireSession("start a workout")) return;
     const template = state.templates.find(t => t.id === templateId);
     if (!template) return;
     const workout = { ...createWorkoutFromTemplate(template), date };
@@ -235,24 +217,25 @@ export default function App() {
     });
   }
   async function saveWorkout() {
+    if (!requireSession("save a workout")) return;
     if (!state.activeWorkout) return;
     const workoutToSave = state.activeWorkout;
     setState((prev) => ({ ...prev, workouts: [...prev.workouts, workoutToSave], activeWorkout: null }));
     setScreen("home");
-    if (!supabase || !session?.user) { setMessage("Workout saved locally."); return; }
     setSyncing(true);
     const { error } = await supabase.from("workout_sessions").insert({
       id: workoutToSave.id, user_id: session.user.id, date: workoutToSave.date,
       template_name: workoutToSave.templateName, notes: workoutToSave.notes, exercises: workoutToSave.exercises,
     });
     setSyncing(false);
-    setMessage(error ? `Saved locally — sync failed: ${error.message}` :"Workout saved ✓");
+    setMessage(error ? `Save failed: ${error.message}` : "Workout saved ✓");
   }
   function cancelWorkout() {
     setState((prev) => ({ ...prev, activeWorkout: null }));
     setScreen("home");
   }
   function duplicateLastWorkout() {
+    if (!requireSession("repeat last workout")) return;
     if (!state.workouts.length) return;
     const latest = [...state.workouts].sort((a, b) => (a.date < b.date ? 1 : -1))[0];
     const copy = { ...latest, id: safeId(), date: todayKey(), exercises: latest.exercises.map((ex) => ({ ...ex, id: safeId(), sets: ex.sets.map(() => emptySet()) })) };
@@ -262,22 +245,25 @@ export default function App() {
 
   // ── Template actions ──
   async function addTemplate() {
+    if (!requireSession("add a template")) return;
     const name = templateName.trim();
     const exercises = templateExercises.split(",").map((x) => x.trim()).filter(Boolean);
     if (!name || !exercises.length) return;
     const newTemplate = { id: safeId(), name, exercises };
     setState((prev) => ({ ...prev, templates: [...prev.templates, newTemplate] }));
     setTemplateName(""); setTemplateExercises("");
-    if (supabase && session?.user) {
-      const { error } = await supabase.from("workout_templates").insert({ id: newTemplate.id, user_id: session.user.id, name: newTemplate.name, exercises: newTemplate.exercises });
-      if (error) setMessage(`Template saved locally — sync failed: ${error.message}`);
-    }
+    setSyncing(true);
+    const { error } = await supabase.from("workout_templates").insert({ id: newTemplate.id, user_id: session.user.id, name: newTemplate.name, exercises: newTemplate.exercises });
+    setSyncing(false);
+    if (error) setMessage(`Save failed: ${error.message}`);
   }
   async function removeTemplate(templateId) {
+    if (!requireSession("remove a template")) return;
     setState((prev) => ({ ...prev, templates: prev.templates.filter((t) => t.id !== templateId) }));
-    if (supabase && session?.user) {
-      await supabase.from("workout_templates").delete().eq("id", templateId).eq("user_id", session.user.id);
-    }
+    setSyncing(true);
+    const { error } = await supabase.from("workout_templates").delete().eq("id", templateId).eq("user_id", session.user.id);
+    setSyncing(false);
+    if (error) setMessage(`Remove failed: ${error.message}`);
   }
   function startEditTemplate(template) {
     setEditingTemplateId(template.id);
@@ -285,6 +271,7 @@ export default function App() {
     setEditExercises(template.exercises.join(", "));
   }
   async function saveEditTemplate() {
+    if (!requireSession("update a template")) return;
     const name = editName.trim();
     const exercises = editExercises.split(",").map((x) => x.trim()).filter(Boolean);
     if (!name || !exercises.length) return;
@@ -292,18 +279,21 @@ export default function App() {
       ...prev,
       templates: prev.templates.map((t) => t.id === editingTemplateId ? { ...t, name, exercises } : t),
     }));
-    if (supabase && session?.user) {
-      await supabase.from("workout_templates").update({ name, exercises }).eq("id", editingTemplateId).eq("user_id", session.user.id);
-    }
+    setSyncing(true);
+    const { error } = await supabase.from("workout_templates").update({ name, exercises }).eq("id", editingTemplateId).eq("user_id", session.user.id);
+    setSyncing(false);
+    if (error) setMessage(`Update failed: ${error.message}`);
     setEditingTemplateId(null);
   }
 
   // ── Schedule actions ──
   function assignSchedule(date, templateId) {
+    if (!requireSession("schedule a workout")) return;
     setSchedule((prev) => ({ ...prev, [date]: templateId }));
     setSelectedCalDay(null);
   }
   function removeScheduleDay(date) {
+    if (!requireSession("modify schedule")) return;
     setSchedule((prev) => { const next = { ...prev }; delete next[date]; return next; });
     setSelectedCalDay(null);
   }
@@ -331,8 +321,7 @@ export default function App() {
     setMessage(error ? error.message : "Signed in ✓");
   }
   async function signOut() {
-    if (!supabase) return;
-    await supabase.auth.signOut();
+    await authSignOut();
     setMessage("Signed out.");
   }
 
@@ -346,12 +335,76 @@ export default function App() {
     );
   }, [state.workouts, search]);
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="app loading-screen">
         <div className="loading-content">
           <div className="loading-icon">🏋️</div>
           <p>Loading your gym data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Authentication Guard ───
+  if (!session && !isGuest) {
+    return (
+      <div className="app auth-screen">
+        <div className="auth-screen-container">
+          <div className="auth-screen-logo">🏋️</div>
+          <h1 className="auth-screen-title">Gym Logger</h1>
+          <p className="auth-screen-subtitle">Track your workouts in the cloud</p>
+          
+          {!hasSupabase && (
+            <div className="banner" style={{ marginBottom: 20 }}>
+              ⚠️ Supabase keys not configured. Contact admin.
+            </div>
+          )}
+          
+          <div className="auth-form" style={{ marginTop: 30 }}>
+            <h2 className="section-title">Sign In or Create Account</h2>
+            <input 
+              value={email} 
+              onChange={(e) => setEmail(e.target.value)} 
+              placeholder="Email" 
+              type="email" 
+              disabled={!hasSupabase}
+            />
+            <input 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              placeholder="Password" 
+              type="password" 
+              disabled={!hasSupabase}
+            />
+            <button 
+              className="cta-btn accent" 
+              onClick={signIn} 
+              disabled={!hasSupabase}
+            >
+              Sign In
+            </button>
+            <button 
+              className="cta-btn secondary" 
+              onClick={signUp} 
+              disabled={!hasSupabase}
+            >
+              Create Account
+            </button>
+            <div style={{ marginTop: 20, textAlign: "center" }}>
+              <p className="muted small" style={{ marginBottom: 12 }}>or</p>
+              <button 
+                className="cta-btn" 
+                style={{ backgroundColor: "#6c757d", color: "white" }}
+                onClick={startGuestMode}
+              >
+                Explore as Guest
+              </button>
+              <p className="muted small" style={{ marginTop: 8, fontSize: "12px" }}>You can sign in later to save your progress</p>
+            </div>
+          </div>
+          
+          {message && <div className="banner" style={{ marginTop: 20 }}>{message}</div>}
         </div>
       </div>
     );
@@ -372,6 +425,7 @@ export default function App() {
       {showNav && (
         <aside className="sidebar">
           <div className="sidebar-logo">🏋️ Gym Logger</div>
+          {isGuest && <div className="badge" style={{ backgroundColor: "#ffc107", color: "#000", padding: "4px 8px", borderRadius: "4px", fontSize: "12px", textAlign: "center", marginBottom: "12px", fontWeight: "500" }}>👤 Guest Mode</div>}
           <nav className="sidebar-nav">
             {NAV_ITEMS.map((item) => (
               <button key={item.id} className={`sidebar-nav-btn ${screen === item.id ? "active" : ""}`} onClick={() => setScreen(item.id)}>
@@ -726,6 +780,11 @@ export default function App() {
             <h1 className="screen-title">Account</h1>
             {!session ? (
               <div className="auth-form">
+                {isGuest && (
+                  <div className="banner" style={{ backgroundColor: "#ffc107", color: "#000", marginBottom: "16px" }}>
+                    👤 You're exploring as a guest. Sign in to save your progress to the cloud.
+                  </div>
+                )}
                 {!hasSupabase && <div className="banner">Cloud login disabled — Supabase keys not added yet.</div>}
                 <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" disabled={!hasSupabase} />
                 <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" disabled={!hasSupabase} />
@@ -755,6 +814,14 @@ export default function App() {
           ))}
         </nav>
       )}
+
+      {/* ── SIGN-IN PROMPT MODAL ── */}
+      <SignInPromptModal 
+        isOpen={showSignInPrompt}
+        action={signInPromptAction}
+        onClose={() => setShowSignInPrompt(false)}
+        onSignIn={handleSignInFromPrompt}
+      />
     </div>
   );
 }
