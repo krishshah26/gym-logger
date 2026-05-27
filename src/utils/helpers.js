@@ -36,6 +36,7 @@ export function createWorkoutFromTemplate(template) {
     exercises: template.exercises.map((name) => ({
       id: safeId(),
       name,
+      note: "",
       sets: [emptySet(), emptySet(), emptySet()],
     })),
   };
@@ -112,12 +113,78 @@ export function mapWorkoutsFromRows(rows) {
     exercises: (Array.isArray(row.exercises) ? row.exercises : []).map((ex) => ({
       id: ex.id || safeId(),
       name: ex.name,
+      note: ex.note || "",
       sets:
         Array.isArray(ex.sets) && ex.sets.length
           ? ex.sets
           : [emptySet(), emptySet(), emptySet()],
     })),
   }));
+}
+
+export function calculateWorkoutStreak(workouts, options = {}) {
+  const { resetFromDate = null } = options;
+  const workoutDates = new Set(
+    (workouts || [])
+      .filter((workout) => !resetFromDate || workout.date > resetFromDate)
+      .map((workout) => workout.date)
+  );
+
+  let streak = 0;
+  let cursor = new Date();
+
+  while (true) {
+    const key = cursor.toISOString().slice(0, 10);
+    if (!workoutDates.has(key)) break;
+    streak += 1;
+    cursor = new Date(cursor.getTime() - 24 * 60 * 60 * 1000);
+  }
+
+  return streak;
+}
+
+export function calculateBestWorkoutStreak(workouts) {
+  const sortedDates = [...new Set((workouts || []).map((workout) => workout.date))].sort((a, b) => b.localeCompare(a));
+  let best = 0;
+  let current = 0;
+  let previous = null;
+
+  for (const date of sortedDates) {
+    const currentDate = new Date(date + "T00:00:00.000Z");
+    if (previous) {
+      const dayBefore = new Date(previous.getTime() - 24 * 60 * 60 * 1000);
+      const dayBeforeKey = dayBefore.toISOString().slice(0, 10);
+      if (date === dayBeforeKey) {
+        current += 1;
+      } else {
+        best = Math.max(best, current);
+        current = 1;
+      }
+    } else {
+      current = 1;
+    }
+    previous = currentDate;
+  }
+
+  best = Math.max(best, current);
+  return best;
+}
+
+export function calculateOneRepMax(weight, reps) {
+  const parsedWeight = Number(weight);
+  const parsedReps = Number(reps);
+
+  if (Number.isNaN(parsedWeight) || Number.isNaN(parsedReps) || parsedReps <= 0) return null;
+  return parsedWeight * (1 + parsedReps / 30);
+}
+
+export function calculateExerciseOneRepMax(exercise) {
+  const validEstimates = (exercise.sets || [])
+    .map((set) => calculateOneRepMax(set.weight, set.reps))
+    .filter((value) => value !== null);
+
+  if (!validEstimates.length) return null;
+  return Math.max(...validEstimates);
 }
 
 export function getLastExerciseStats(workouts, exerciseName) {

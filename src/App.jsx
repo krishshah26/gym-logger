@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase, hasSupabase } from "./services/supabase";
 import { useAuth } from "./context/AuthContext";
 import { SignInPromptModal } from "./components/Common/SignInPromptModal";
+import { DeleteConfirmModal } from "./components/Common/DeleteConfirmModal";
+import { OneRepMaxInfoModal } from "./components/Common/OneRepMaxInfoModal";
 import { Icons } from "./utils/icons";
 import {
   DEFAULT_TEMPLATES,
@@ -24,6 +26,9 @@ import {
   loadSchedule,
   mapTemplatesFromRows,
   mapWorkoutsFromRows,
+  calculateWorkoutStreak,
+  calculateBestWorkoutStreak,
+  calculateExerciseOneRepMax,
   getLastExerciseStats,
   migrateLocalDataToCloud,
 } from "./utils/helpers";
@@ -54,8 +59,65 @@ export default function App() {
   const [editingTemplateId, setEditingTemplateId] = useState(null);
   const [editName, setEditName] = useState("");
   const [editExercises, setEditExercises] = useState("");
-  // Workout detail (from calendar)
+  // Workout detail (from calendar/history)
   const [detailWorkoutId, setDetailWorkoutId] = useState(null);
+  const [detailReturnScreen, setDetailReturnScreen] = useState("calendar");
+  const [streakSettings, setStreakSettings] = useState(() => {
+    if (typeof window === "undefined") return { enabled: false, target: 7, lastResetDate: null };
+    try {
+      const saved = localStorage.getItem("gym-streak-settings");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          enabled: Boolean(parsed.enabled),
+          target: Math.max(1, Number.parseInt(parsed.target, 10) || 7),
+          lastResetDate: parsed.lastResetDate || null,
+        };
+      }
+    } catch {
+      // ignore parse errors and fall back to defaults
+    }
+    return { enabled: false, target: 7, lastResetDate: null };
+  });
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === "undefined") return "dark";
+    const savedTheme = localStorage.getItem("gym-theme");
+    return savedTheme === "light" ? "light" : "dark";
+  });
+  const [deleteModalState, setDeleteModalState] = useState({
+    isOpen: false,
+    workoutId: null,
+    mode: "delete",
+    title: "Delete Workout",
+    description: "This will permanently remove this workout from your history.",
+    confirmLabel: "Delete Workout",
+  });
+  const [showOneRepMaxInfo, setShowOneRepMaxInfo] = useState(false);
+
+  const toggleTheme = () => {
+    setTheme((current) => current === "dark" ? "light" : "dark");
+  };
+
+  const toggleStreakTracking = () => {
+    setStreakSettings((current) => ({
+      ...current,
+      enabled: !current.enabled,
+    }));
+  };
+
+  const updateStreakTarget = (value) => {
+    const parsed = Number.parseInt(value, 10);
+    setStreakSettings((current) => ({
+      ...current,
+      target: Number.isNaN(parsed) ? 1 : Math.max(1, parsed),
+    }));
+  };
+
+  const currentStreak = calculateWorkoutStreak(state.workouts, { resetFromDate: streakSettings.lastResetDate });
+  const bestStreak = calculateBestWorkoutStreak(state.workouts);
+  const streakTarget = Math.max(1, streakSettings.target || 1);
+  const showWorkoutStreak = streakSettings.enabled;
+  const goalJustReached = streakSettings.lastResetDate === todayKey();
 
   // Load schedule from localStorage
   useEffect(() => { setSchedule(loadSchedule()); }, []);
@@ -79,6 +141,26 @@ export default function App() {
   }, [session, isGuest]);
 
   useEffect(() => { saveLocalState(state); }, [state]);
+
+  useEffect(() => {
+    localStorage.setItem("gym-streak-settings", JSON.stringify(streakSettings));
+  }, [streakSettings]);
+
+  useEffect(() => {
+    if (!streakSettings.enabled) return;
+    if (currentStreak >= streakTarget && streakSettings.lastResetDate !== todayKey()) {
+      setStreakSettings((previous) => ({
+        ...previous,
+        lastResetDate: todayKey(),
+      }));
+    }
+  }, [currentStreak, streakSettings.enabled, streakTarget, streakSettings.lastResetDate]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    localStorage.setItem("gym-theme", theme);
+  }, [theme]);
 
   async function hydrateFromCloud() {
     if (!supabase || !session) return;
@@ -207,13 +289,27 @@ export default function App() {
   function addExerciseToActive() {
     setState((prev) => {
       if (!prev.activeWorkout) return prev;
-      return { ...prev, activeWorkout: { ...prev.activeWorkout, exercises: [...prev.activeWorkout.exercises, { id: safeId(), name: "New Exercise", sets: [emptySet(), emptySet(), emptySet()] }] } };
+      return { ...prev, activeWorkout: { ...prev.activeWorkout, exercises: [...prev.activeWorkout.exercises, { id: safeId(), name: "New Exercise", note: "", sets: [emptySet(), emptySet(), emptySet()] }] } };
     });
   }
   function updateExerciseName(exerciseId, value) {
     setState((prev) => {
       if (!prev.activeWorkout) return prev;
       return { ...prev, activeWorkout: { ...prev.activeWorkout, exercises: prev.activeWorkout.exercises.map((ex) => ex.id === exerciseId ? { ...ex, name: value } : ex) } };
+    });
+  }
+  function updateExerciseNote(exerciseId, value) {
+    setState((prev) => {
+      if (!prev.activeWorkout) return prev;
+      return {
+        ...prev,
+        activeWorkout: {
+          ...prev.activeWorkout,
+          exercises: prev.activeWorkout.exercises.map((ex) =>
+            ex.id === exerciseId ? { ...ex, note: value } : ex
+          ),
+        },
+      };
     });
   }
   async function saveWorkout() {
@@ -238,7 +334,17 @@ export default function App() {
     if (!requireSession("repeat last workout")) return;
     if (!state.workouts.length) return;
     const latest = [...state.workouts].sort((a, b) => (a.date < b.date ? 1 : -1))[0];
-    const copy = { ...latest, id: safeId(), date: todayKey(), exercises: latest.exercises.map((ex) => ({ ...ex, id: safeId(), sets: ex.sets.map(() => emptySet()) })) };
+    const copy = {
+      ...latest,
+      id: safeId(),
+      date: todayKey(),
+      exercises: latest.exercises.map((ex) => ({
+        ...ex,
+        id: safeId(),
+        note: ex.note || "",
+        sets: ex.sets.map(() => emptySet()),
+      })),
+    };
     setState((prev) => ({ ...prev, activeWorkout: copy }));
     setScreen("workout");
   }
@@ -298,12 +404,122 @@ export default function App() {
     setSelectedCalDay(null);
   }
 
+  function requestWorkoutAction(workoutId, mode) {
+    const action = mode === "delete" ? "delete a workout" : "clear workout logs";
+    if (!requireSession(action)) return;
+
+    setDeleteModalState({
+      isOpen: true,
+      workoutId,
+      mode,
+      title: mode === "delete" ? "Delete Workout" : "Clear Workout Logs",
+      description: mode === "delete"
+        ? "This will permanently remove this workout from your history."
+        : "This will clear all logged weights and reps while keeping the workout record.",
+      confirmLabel: mode === "delete" ? "Delete Workout" : "Clear Logs",
+    });
+  }
+
+  async function handleDeleteModalConfirm() {
+    if (!deleteModalState.workoutId) return;
+
+    const { workoutId, mode } = deleteModalState;
+    setDeleteModalState((prev) => ({ ...prev, isOpen: false }));
+
+    if (mode === "delete") {
+      await deleteWorkout(workoutId);
+      return;
+    }
+
+    await clearWorkoutLogs(workoutId);
+  }
+
+  async function deleteWorkout(workoutId) {
+    const workoutToDelete = state.workouts.find((workout) => workout.id === workoutId);
+    if (!workoutToDelete) return;
+
+    if (session) {
+      setSyncing(true);
+      const { error } = await supabase
+        .from("workout_sessions")
+        .delete()
+        .eq("id", workoutId)
+        .eq("user_id", session.user.id);
+      setSyncing(false);
+
+      if (error) {
+        setMessage(`Delete failed: ${error.message}`);
+        return;
+      }
+    }
+
+    setState((prev) => ({
+      ...prev,
+      workouts: prev.workouts.filter((workout) => workout.id !== workoutId),
+    }));
+
+    if (detailWorkoutId === workoutId) {
+      setDetailWorkoutId(null);
+      if (screen === "workoutDetail") {
+        setScreen(detailReturnScreen || "calendar");
+      }
+    }
+
+    setMessage("Workout deleted.");
+  }
+
+  async function clearWorkoutLogs(workoutId) {
+    const workoutToClear = state.workouts.find((workout) => workout.id === workoutId);
+    if (!workoutToClear) return;
+
+    const clearedExercises = workoutToClear.exercises.map((exercise) => ({
+      ...exercise,
+      sets: exercise.sets.map(() => emptySet()),
+    }));
+
+    if (session) {
+      setSyncing(true);
+      const { error } = await supabase
+        .from("workout_sessions")
+        .update({ exercises: clearedExercises })
+        .eq("id", workoutId)
+        .eq("user_id", session.user.id);
+      setSyncing(false);
+
+      if (error) {
+        setMessage(`Clear failed: ${error.message}`);
+        return;
+      }
+    }
+
+    setState((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((workout) =>
+        workout.id === workoutId
+          ? { ...workout, exercises: clearedExercises }
+          : workout
+      ),
+    }));
+
+    setMessage("Workout logs cleared.");
+  }
+
+  function openWorkoutDetail(workoutId) {
+    setDetailWorkoutId(workoutId);
+    setScreen("workoutDetail");
+  }
+
+  function openWorkoutDetail(workoutId, returnScreen = "calendar") {
+    setDetailWorkoutId(workoutId);
+    setDetailReturnScreen(returnScreen);
+    setScreen("workoutDetail");
+  }
+
   // ── Calendar day click ──
   function handleCalDayClick(dateStr) {
     const completed = state.workouts.find((w) => w.date === dateStr);
     if (completed) {
-      setDetailWorkoutId(completed.id);
-      setScreen("workoutDetail");
+      openWorkoutDetail(completed.id, "calendar");
       return;
     }
     setSelectedCalDay(selectedCalDay === dateStr ? null : dateStr);
@@ -464,6 +680,36 @@ export default function App() {
                 <button className="cta-btn secondary" onClick={duplicateLastWorkout}>Repeat Last Workout</button>
               )}
             </div>
+            {showWorkoutStreak && (
+              <div className="section">
+                <h2 className="section-title">Current Streak</h2>
+                <div className="streak-card">
+                  <div className="streak-fire">🔥</div>
+                  <div className="streak-copy">
+                    <div className="streak-number">{currentStreak}</div>
+                    <p className="streak-label">{currentStreak === 1 ? "day streak" : "days streak"}</p>
+                    <div className="streak-stats-row">
+                      <span className="streak-stat-pill">Best {bestStreak} days</span>
+                    </div>
+                    <div className="streak-progress-shell" aria-hidden="true">
+                      <div className="streak-progress-bar">
+                        <div
+                          className="streak-progress-fill"
+                          style={{ width: `${Math.min(100, Math.max(0, (currentStreak / streakTarget) * 100))}%` }}
+                        />
+                      </div>
+                    </div>
+                    <p className="streak-subtitle">
+                      {goalJustReached
+                        ? `Goal reached: ${streakTarget} days. Current streak reset and best streak preserved.`
+                        : currentStreak >= streakTarget
+                          ? `Goal reached: ${streakTarget} / ${streakTarget} days!`
+                          : `${currentStreak} / ${streakTarget} days toward your goal`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
             {state.workouts.length > 0 && (() => {
               const last = [...state.workouts].sort((a, b) => (a.date < b.date ? 1 : -1))[0];
               return (
@@ -631,11 +877,24 @@ export default function App() {
             <div className="exercises-stack">
               {state.activeWorkout.exercises.map((exercise) => {
                 const last = getLastExerciseStats(state.workouts, exercise.name);
+                const oneRepMax = calculateExerciseOneRepMax(exercise);
                 return (
                   <div key={exercise.id} className="exercise-card">
                     <input className="exercise-name-input" value={exercise.name} onChange={(e) => updateExerciseName(exercise.id, e.target.value)} />
                     {last && (
                       <div className="last-time-hint">Last ({last.date}): {last.sets.map((s) => `${s.weight || "-"}×${s.reps || "-"}`).join("  ")}</div>
+                    )}
+                    <input
+                      className="exercise-note-input"
+                      value={exercise.note || ""}
+                      onChange={(e) => updateExerciseNote(exercise.id, e.target.value)}
+                      placeholder="Add a note"
+                    />
+                    {oneRepMax && (
+                      <div className="one-rep-max-badge" onClick={() => setShowOneRepMaxInfo(true)}>
+                        1RM estimate: {Math.round(oneRepMax)} lbs
+                        <span className="one-rep-max-help">?</span>
+                      </div>
                     )}
                     <div className="sets-header">
                       <span>Set</span><span>Weight</span><span>Reps</span><span></span>
@@ -660,21 +919,50 @@ export default function App() {
         {/* ── WORKOUT DETAIL (from calendar) ── */}
         {screen === "workoutDetail" && (() => {
           const workout = state.workouts.find((w) => w.id === detailWorkoutId);
-          if (!workout) return null;
+          if (!workout) {
+            return (
+              <div className="screen">
+                <div className="screen-header">
+                  <button className="back-btn" onClick={() => {
+                    setDetailWorkoutId(null);
+                    setScreen(detailReturnScreen || "calendar");
+                  }}>{Icons.back} {detailReturnScreen === "history" ? "History" : "Calendar"}</button>
+                </div>
+                <div className="empty-state">
+                  <div className="empty-icon">🗑️</div>
+                  <p>This workout no longer exists.</p>
+                  <p className="muted small">It may have been deleted from history.</p>
+                </div>
+              </div>
+            );
+          }
           return (
             <div className="screen">
               <div className="screen-header">
-                <button className="back-btn" onClick={() => setScreen("calendar")}>{Icons.back} Calendar</button>
+                <button className="back-btn" onClick={() => setScreen(detailReturnScreen || "calendar")}>{Icons.back} {detailReturnScreen === "history" ? "History" : "Calendar"}</button>
               </div>
               <div className="workout-header">
                 <h1 className="screen-title">{workout.templateName}</h1>
                 <span className="workout-date-pill">{workout.date}</span>
               </div>
+              <div className="workout-detail-actions">
+                <button className="cta-btn secondary" onClick={() => requestWorkoutAction(workout.id, "clear")}>Clear Logs</button>
+                <button className="cta-btn danger" onClick={() => requestWorkoutAction(workout.id, "delete")}>Delete Workout</button>
+              </div>
               <div className="exercises-stack">
-                {workout.exercises.map((exercise) => (
-                  <div key={exercise.id} className="exercise-card">
-                    <p className="exercise-detail-name">{exercise.name}</p>
-                    <div className="sets-header">
+                {workout.exercises.map((exercise) => {
+                  const oneRepMax = calculateExerciseOneRepMax(exercise);
+                  return (
+                    <div key={exercise.id} className="exercise-card">
+                      <p className="exercise-detail-name">{exercise.name}</p>
+                      {exercise.note && <p className="exercise-note-preview">{exercise.note}</p>}
+                      {oneRepMax && (
+                        <div className="one-rep-max-badge" onClick={() => setShowOneRepMaxInfo(true)}>
+                          1RM estimate: {Math.round(oneRepMax)} lbs
+                          <span className="one-rep-max-help">?</span>
+                        </div>
+                      )}
+                      <div className="sets-header">
                       <span>Set</span><span>Weight</span><span>Reps</span><span></span>
                     </div>
                     {exercise.sets.filter((s) => s.weight || s.reps).map((set, i) => (
@@ -685,11 +973,12 @@ export default function App() {
                         <span />
                       </div>
                     ))}
-                    {exercise.sets.filter((s) => s.weight || s.reps).length === 0 && (
-                      <p className="muted small">No sets logged</p>
-                    )}
-                  </div>
-                ))}
+                      {exercise.sets.filter((s) => s.weight || s.reps).length === 0 && (
+                        <p className="muted small">No sets logged</p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
@@ -707,7 +996,7 @@ export default function App() {
             ) : (
               <div className="workout-list">
                 {filteredHistory.map((workout) => (
-                  <div key={workout.id} className="workout-card">
+                  <div key={workout.id} className="workout-card clickable" onClick={() => openWorkoutDetail(workout.id, "history")}>
                     <div className="workout-card-header">
                       <span className="workout-name">{workout.templateName}</span>
                       <span className="workout-date-pill">{workout.date}</span>
@@ -719,6 +1008,10 @@ export default function App() {
                           <span className="ex-sets-summary">{ex.sets.filter((s) => s.weight || s.reps).map((s) => `${s.weight || "-"}×${s.reps || "-"}`).join("  ") || "—"}</span>
                         </div>
                       ))}
+                    </div>
+                    <div className="workout-card-actions" onClick={(e) => e.stopPropagation()}>
+                      <button className="mini-action-btn" onClick={(e) => { e.stopPropagation(); requestWorkoutAction(workout.id, "clear"); }}>Clear Logs</button>
+                      <button className="mini-action-btn danger" onClick={(e) => { e.stopPropagation(); requestWorkoutAction(workout.id, "delete"); }}>Delete</button>
                     </div>
                   </div>
                 ))}
@@ -795,6 +1088,52 @@ export default function App() {
               <div className="auth-form">
                 <div className="banner">Signed in as {session.user.email}</div>
                 {syncing && <p className="muted small">Syncing...</p>}
+                <div className="appearance-panel streak-panel">
+                  <div className="appearance-panel-copy">
+                    <p className="appearance-panel-title">Streak Tracking</p>
+                    <p className="appearance-panel-subtitle">Turn on streak tracking and set your daily goal.</p>
+                  </div>
+                  <div className="streak-settings-stack">
+                    <button
+                      className={`theme-toggle ${streakSettings.enabled ? "active" : ""}`}
+                      onClick={toggleStreakTracking}
+                      aria-label={streakSettings.enabled ? "Disable streak tracking" : "Enable streak tracking"}
+                    >
+                      <span className="theme-toggle-track">
+                        <span className="theme-toggle-thumb" />
+                      </span>
+                      <span className="theme-toggle-copy">{streakSettings.enabled ? "Streak on" : "Streak off"}</span>
+                    </button>
+                    <label className="streak-target-field">
+                      <span className="streak-target-label">Target days</span>
+                      <input
+                        className="streak-target-input"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={streakSettings.target}
+                        onChange={(e) => updateStreakTarget(e.target.value)}
+                        disabled={!streakSettings.enabled}
+                      />
+                    </label>
+                  </div>
+                </div>
+                <div className="appearance-panel">
+                  <div className="appearance-panel-copy">
+                    <p className="appearance-panel-title">Appearance</p>
+                    <p className="appearance-panel-subtitle">Choose your theme: Light or Dark</p>
+                  </div>
+                  <button
+                    className={`theme-toggle ${theme === "light" ? "active" : ""}`}
+                    onClick={toggleTheme}
+                    aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+                  >
+                    <span className="theme-toggle-track">
+                      <span className="theme-toggle-thumb" />
+                    </span>
+                    <span className="theme-toggle-copy">{theme === "dark" ? "Dark mode" : "Light mode"}</span>
+                  </button>
+                </div>
                 <button className="cta-btn secondary" onClick={signOut}>Sign Out</button>
               </div>
             )}
@@ -806,14 +1145,32 @@ export default function App() {
 
       {/* ── BOTTOM NAV (mobile only) ── */}
       {showNav && (
-        <nav className="bottom-nav">
-          {NAV_ITEMS.map((item) => (
-            <button key={item.id} className={`nav-btn ${screen === item.id ? "active" : ""}`} onClick={() => setScreen(item.id)}>
-              {item.icon}<span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
+        <div className="mobile-bottom-shell">
+          <nav className="bottom-nav">
+            {NAV_ITEMS.map((item) => (
+              <button key={item.id} className={`nav-btn ${screen === item.id ? "active" : ""}`} onClick={() => setScreen(item.id)}>
+                {item.icon}<span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
       )}
+
+      {/* ── DELETE CONFIRMATION MODAL ── */}
+      <DeleteConfirmModal
+        isOpen={deleteModalState.isOpen}
+        title={deleteModalState.title}
+        description={deleteModalState.description}
+        confirmLabel={deleteModalState.confirmLabel}
+        onClose={() => setDeleteModalState((prev) => ({ ...prev, isOpen: false }))}
+        onConfirm={handleDeleteModalConfirm}
+      />
+
+      {/* ── 1RM INFO MODAL ── */}
+      <OneRepMaxInfoModal
+        isOpen={showOneRepMaxInfo}
+        onClose={() => setShowOneRepMaxInfo(false)}
+      />
 
       {/* ── SIGN-IN PROMPT MODAL ── */}
       <SignInPromptModal 
