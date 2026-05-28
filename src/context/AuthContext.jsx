@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { supabase } from "../services/supabase";
 
 const AuthContext = createContext();
@@ -7,6 +7,7 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [isGuest, setIsGuest] = useState(false);
   const [loading, setLoading] = useState(true);
+  const sessionRef = useRef(null);
 
   useEffect(() => {
     if (!supabase) {
@@ -22,14 +23,27 @@ export function AuthProvider({ children }) {
         setLoading(false);
         return;
       }
-      setSession(data.session ?? null);
+      const nextSession = data.session ?? null;
+      sessionRef.current = nextSession;
+      setSession(nextSession);
       setIsGuest(false);
       setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, nextSession) => {
+      async (event, nextSession) => {
         if (!active) return;
+
+        const currentSession = sessionRef.current;
+        const sameSession = currentSession?.access_token === nextSession?.access_token
+          && currentSession?.user?.id === nextSession?.user?.id;
+
+        if (sameSession && event !== "SIGNED_OUT") {
+          setLoading(false);
+          return;
+        }
+
+        sessionRef.current = nextSession ?? null;
         setSession(nextSession ?? null);
         setIsGuest(false);
         setLoading(false);

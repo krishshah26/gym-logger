@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase, hasSupabase } from "./services/supabase";
 import { useAuth } from "./context/AuthContext";
 import { SignInPromptModal } from "./components/Common/SignInPromptModal";
@@ -41,8 +41,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState("info");
+  const [draftSavedAt, setDraftSavedAt] = useState(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [authMode, setAuthMode] = useState("signIn");
   const [search, setSearch] = useState("");
   const [templateName, setTemplateName] = useState("");
   const [templateExercises, setTemplateExercises] = useState("");
@@ -62,6 +65,8 @@ export default function App() {
   // Workout detail (from calendar/history)
   const [detailWorkoutId, setDetailWorkoutId] = useState(null);
   const [detailReturnScreen, setDetailReturnScreen] = useState("calendar");
+  const [editingWorkoutId, setEditingWorkoutId] = useState(null);
+  const hasHydratedCloudRef = useRef(false);
   const [streakSettings, setStreakSettings] = useState(() => {
     if (typeof window === "undefined") return { enabled: false, target: 7, lastResetDate: null };
     try {
@@ -123,11 +128,26 @@ export default function App() {
   useEffect(() => { setSchedule(loadSchedule()); }, []);
   useEffect(() => { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule)); }, [schedule]);
 
-  useEffect(() => { 
-    if (!isGuest && session) { 
-      hydrateFromCloud();
-    } else if (isGuest) {
-      // Load local data or default templates for guest mode
+  useEffect(() => {
+    if (!isGuest && session?.user?.id) {
+      const localState = loadLocalState();
+      setState({
+        templates: localState.templates.length ? localState.templates : DEFAULT_TEMPLATES,
+        workouts: localState.workouts,
+        activeWorkout: localState.activeWorkout ?? null,
+      });
+      setLoading(false);
+
+      if (!hasHydratedCloudRef.current) {
+        hasHydratedCloudRef.current = true;
+        hydrateFromCloud({ silent: true });
+      }
+      return;
+    }
+
+    hasHydratedCloudRef.current = false;
+
+    if (isGuest) {
       const localState = loadLocalState();
       setState({
         templates: localState.templates.length ? localState.templates : DEFAULT_TEMPLATES,
@@ -135,12 +155,18 @@ export default function App() {
         activeWorkout: null,
       });
       setLoading(false);
-    } else if (!session) {
-      setLoading(false);
+      return;
     }
-  }, [session, isGuest]);
 
-  useEffect(() => { saveLocalState(state); }, [state]);
+    setLoading(false);
+  }, [session?.user?.id, isGuest]);
+
+  useEffect(() => {
+    saveLocalState(state);
+    if (state.activeWorkout) {
+      setDraftSavedAt(new Date());
+    }
+  }, [state]);
 
   useEffect(() => {
     localStorage.setItem("gym-streak-settings", JSON.stringify(streakSettings));
@@ -162,17 +188,23 @@ export default function App() {
     localStorage.setItem("gym-theme", theme);
   }, [theme]);
 
-  async function hydrateFromCloud() {
+  async function hydrateFromCloud(options = {}) {
+    const { silent = false } = options;
     if (!supabase || !session) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     const [{ data: templateRows, error: te }, { data: workoutRows, error: we }] = await Promise.all([
       supabase.from("workout_templates").select("id, name, exercises").order("created_at", { ascending: true }),
       supabase.from("workout_sessions").select("id, date, template_name, notes, exercises").order("date", { ascending: false }),
     ]);
-    if (te || we) { setMessage(te?.message || we?.message || "Could not load cloud data."); setLoading(false); return; }
+    if (te || we) {
+      setMessage(te?.message || we?.message || "Could not load cloud data.");
+      if (!silent) setLoading(false);
+      return;
+    }
     
     const storedLocalState = loadStoredLocalState();
     const localState = loadLocalState();
+    const draftWorkout = storedLocalState?.activeWorkout ?? null;
     const cloudTemplates = templateRows?.length ? mapTemplatesFromRows(templateRows) : [];
     const cloudWorkouts = workoutRows?.length ? mapWorkoutsFromRows(workoutRows) : [];
     const shouldMigrate = hasLocalDataToMigrate(storedLocalState);
@@ -198,7 +230,7 @@ export default function App() {
       setState({
         templates: migratedTemplates,
         workouts: migratedWorkouts,
-        activeWorkout: null,
+        activeWorkout: draftWorkout,
       });
 
       if (templatesCount > 0 || workoutsCount > 0) {
@@ -208,11 +240,11 @@ export default function App() {
       setState({
         templates: cloudTemplates.length ? cloudTemplates : DEFAULT_TEMPLATES,
         workouts: cloudWorkouts.length ? cloudWorkouts : [],
-        activeWorkout: null,
+        activeWorkout: draftWorkout,
       });
     }
     
-    setLoading(false);
+    if (!silent) setLoading(false);
   }
 
   function requireSession(action = "perform this action") {
@@ -315,7 +347,44 @@ export default function App() {
   async function saveWorkout() {
     if (!requireSession("save a workout")) return;
     if (!state.activeWorkout) return;
+
     const workoutToSave = state.activeWorkout;
+    const isEditingExisting = Boolean(editingWorkoutId);
+
+    if (isEditingExisting) {
+      const updatedWorkout = { ...workoutToSave, id: editingWorkoutId };
+      setState((prev) => ({
+        ...prev,
+        workouts: prev.workouts.map((workout) => workout.id === editingWorkoutId ? updatedWorkout : workout),
+        activeWorkout: null,
+      }));
+
+      if (supabase && session) {
+        setSyncing(true);
+        const { error } = await supabase
+          .from("workout_sessions")
+          .update({
+            date: updatedWorkout.date,
+            template_name: updatedWorkout.templateName,
+            notes: updatedWorkout.notes,
+            exercises: updatedWorkout.exercises,
+          })
+          .eq("id", editingWorkoutId)
+          .eq("user_id", session.user.id);
+        setSyncing(false);
+
+        if (error) {
+          setMessage(`Update failed: ${error.message}`);
+          return;
+        }
+      }
+
+      setEditingWorkoutId(null);
+      setScreen("home");
+      setMessage("Workout updated ✓");
+      return;
+    }
+
     setState((prev) => ({ ...prev, workouts: [...prev.workouts, workoutToSave], activeWorkout: null }));
     setScreen("home");
     setSyncing(true);
@@ -327,6 +396,7 @@ export default function App() {
     setMessage(error ? `Save failed: ${error.message}` : "Workout saved ✓");
   }
   function cancelWorkout() {
+    setEditingWorkoutId(null);
     setState((prev) => ({ ...prev, activeWorkout: null }));
     setScreen("home");
   }
@@ -504,6 +574,25 @@ export default function App() {
     setMessage("Workout logs cleared.");
   }
 
+  function startEditingWorkout(workout) {
+    setEditingWorkoutId(workout.id);
+    setState((prev) => ({
+      ...prev,
+      activeWorkout: {
+        ...workout,
+        exercises: workout.exercises.map((exercise) => ({
+          ...exercise,
+          note: exercise.note || "",
+          sets: exercise.sets.map((set) => ({
+            weight: set.weight ?? "",
+            reps: set.reps ?? "",
+          })),
+        })),
+      },
+    }));
+    setScreen("workout");
+  }
+
   function openWorkoutDetail(workoutId) {
     setDetailWorkoutId(workoutId);
     setScreen("workoutDetail");
@@ -526,15 +615,80 @@ export default function App() {
   }
 
   // ── Auth ──
+  function clearAuthStatus() {
+    setMessage("");
+    setMessageTone("info");
+  }
+
+  function showAuthMessage(text, tone = "info") {
+    setMessage(text);
+    setMessageTone(tone);
+  }
+
+  function validateAuthInput() {
+    const trimmedEmail = email.trim();
+    const trimmedPassword = password.trim();
+
+    if (!trimmedEmail || !trimmedPassword) {
+      showAuthMessage("Please enter your email and password before continuing.", "error");
+      return false;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      showAuthMessage("Please enter a valid email address.", "error");
+      return false;
+    }
+
+    return true;
+  }
+
+  function enterGuestMode() {
+    clearAuthStatus();
+    setEmail("");
+    setPassword("");
+    setAuthMode("signIn");
+    startGuestMode();
+    setScreen("home");
+  }
+
+  function handleAuthError(error, fallbackMessage) {
+    const authMessage = error?.message || fallbackMessage;
+    if (/anonymous/i.test(authMessage)) {
+      showAuthMessage("Anonymous sign-in is disabled for this project. Please create an account with email/password, or use Explore as Guest.", "error");
+      return;
+    }
+    showAuthMessage(authMessage || fallbackMessage, "error");
+  }
+
   async function signUp() {
-    if (!supabase) { setMessage("Supabase not configured."); return; }
-    const { error } = await supabase.auth.signUp({ email, password });
-    setMessage(error ? error.message : "Account created — check your email.");
+    if (!supabase) { showAuthMessage("Supabase is not configured yet.", "error"); return; }
+    if (!validateAuthInput()) return;
+
+    try {
+      const { error } = await supabase.auth.signUp({ email: email.trim(), password: password.trim() });
+      if (error) {
+        handleAuthError(error, "Could not create your account.");
+        return;
+      }
+      showAuthMessage("Account created. Check your email inbox for the confirmation link before signing in.", "success");
+    } catch (error) {
+      handleAuthError(error, "Could not create your account.");
+    }
   }
   async function signIn() {
-    if (!supabase) { setMessage("Supabase not configured."); return; }
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setMessage(error ? error.message : "Signed in ✓");
+    if (!supabase) { showAuthMessage("Supabase is not configured yet.", "error"); return; }
+    if (!validateAuthInput()) return;
+
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: password.trim() });
+      if (error) {
+        handleAuthError(error, "Could not sign in. Check your email and password.");
+        return;
+      }
+      showAuthMessage("Signed in successfully.", "success");
+    } catch (error) {
+      handleAuthError(error, "Could not sign in. Check your email and password.");
+    }
   }
   async function signOut() {
     await authSignOut();
@@ -578,11 +732,31 @@ export default function App() {
           )}
           
           <div className="auth-form" style={{ marginTop: 30 }}>
-            <h2 className="section-title">Sign In or Create Account</h2>
+            <div className="auth-mode-switch" role="tablist" aria-label="Authentication mode">
+              <button
+                type="button"
+                className={`auth-mode-btn ${authMode === "signIn" ? "active" : ""}`}
+                onClick={() => setAuthMode("signIn")}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                className={`auth-mode-btn ${authMode === "createAccount" ? "active" : ""}`}
+                onClick={() => setAuthMode("createAccount")}
+              >
+                Create Account
+              </button>
+            </div>
+            <p className="auth-mode-note">
+              {authMode === "signIn"
+                ? "Use this if you already have an account."
+                : "Use this if you are new and want to create a cloud account."}
+            </p>
             <input 
               value={email} 
               onChange={(e) => setEmail(e.target.value)} 
-              placeholder="Email" 
+              placeholder="Email address" 
               type="email" 
               disabled={!hasSupabase}
             />
@@ -595,24 +769,20 @@ export default function App() {
             />
             <button 
               className="cta-btn accent" 
-              onClick={signIn} 
+              onClick={authMode === "signIn" ? signIn : signUp} 
               disabled={!hasSupabase}
             >
-              Sign In
+              {authMode === "signIn" ? "Sign In" : "Create Account"}
             </button>
-            <button 
-              className="cta-btn secondary" 
-              onClick={signUp} 
-              disabled={!hasSupabase}
-            >
-              Create Account
-            </button>
-            <div style={{ marginTop: 20, textAlign: "center" }}>
+            <p className="muted small" style={{ marginTop: 2, textAlign: "center" }}>
+              Need help? Enter your email and password, then tap the button above.
+            </p>
+            <div style={{ marginTop: 12, textAlign: "center" }}>
               <p className="muted small" style={{ marginBottom: 12 }}>or</p>
               <button 
                 className="cta-btn" 
                 style={{ backgroundColor: "#6c757d", color: "white" }}
-                onClick={startGuestMode}
+                onClick={enterGuestMode}
               >
                 Explore as Guest
               </button>
@@ -620,7 +790,7 @@ export default function App() {
             </div>
           </div>
           
-          {message && <div className="banner" style={{ marginTop: 20 }}>{message}</div>}
+          {message && <div className={`banner banner-${messageTone}`} style={{ marginTop: 20 }}>{message}</div>}
         </div>
       </div>
     );
@@ -669,7 +839,7 @@ export default function App() {
               </div>
               <button className="icon-btn mobile-only" onClick={() => setScreen("account")}>{Icons.account}</button>
             </div>
-            {message && <div className="banner">{message}</div>}
+            {message && <div className={`banner banner-${messageTone}`}>{message}</div>}
             <div className="home-actions">
               {state.activeWorkout ? (
                 <button className="cta-btn accent" onClick={() => setScreen("workout")}>Resume: {state.activeWorkout.templateName} →</button>
@@ -715,7 +885,18 @@ export default function App() {
               return (
                 <div className="section">
                   <h2 className="section-title">Last Session</h2>
-                  <div className="workout-card">
+                  <div
+                    className="workout-card clickable"
+                    onClick={() => openWorkoutDetail(last.id, "home")}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openWorkoutDetail(last.id, "home");
+                      }
+                    }}
+                  >
                     <div className="workout-card-header">
                       <span className="workout-name">{last.templateName}</span>
                       <span className="workout-date-pill">{last.date}</span>
@@ -868,12 +1049,17 @@ export default function App() {
           <div className="screen">
             <div className="screen-header">
               <button className="back-btn danger-text" onClick={cancelWorkout}>✕ Cancel</button>
-              <button className="save-btn" onClick={saveWorkout}>Save Workout</button>
+              <button className="save-btn" onClick={saveWorkout}>{editingWorkoutId ? "Update Workout" : "Save Workout"}</button>
             </div>
             <div className="workout-header">
               <h1 className="screen-title">{state.activeWorkout.templateName}</h1>
               <span className="workout-date-pill">{state.activeWorkout.date}</span>
             </div>
+            {draftSavedAt && (
+              <p className="muted small" style={{ marginBottom: 10 }}>
+                Draft saved locally at {draftSavedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+              </p>
+            )}
             <div className="exercises-stack">
               {state.activeWorkout.exercises.map((exercise) => {
                 const last = getLastExerciseStats(state.workouts, exercise.name);
@@ -946,6 +1132,7 @@ export default function App() {
                 <span className="workout-date-pill">{workout.date}</span>
               </div>
               <div className="workout-detail-actions">
+                <button className="cta-btn secondary" onClick={() => startEditingWorkout(workout)}>Edit Workout</button>
                 <button className="cta-btn secondary" onClick={() => requestWorkoutAction(workout.id, "clear")}>Clear Logs</button>
                 <button className="cta-btn danger" onClick={() => requestWorkoutAction(workout.id, "delete")}>Delete Workout</button>
               </div>
@@ -1074,15 +1261,36 @@ export default function App() {
             {!session ? (
               <div className="auth-form">
                 {isGuest && (
-                  <div className="banner" style={{ backgroundColor: "#ffc107", color: "#000", marginBottom: "16px" }}>
+                  <div className="banner banner-info" style={{ marginBottom: "16px" }}>
                     👤 You're exploring as a guest. Sign in to save your progress to the cloud.
                   </div>
                 )}
-                {!hasSupabase && <div className="banner">Cloud login disabled — Supabase keys not added yet.</div>}
-                <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" disabled={!hasSupabase} />
+                {!hasSupabase && <div className="banner banner-error">Cloud login disabled — Supabase keys not added yet.</div>}
+                <div className="auth-mode-switch" role="tablist" aria-label="Authentication mode">
+                  <button
+                    type="button"
+                    className={`auth-mode-btn ${authMode === "signIn" ? "active" : ""}`}
+                    onClick={() => setAuthMode("signIn")}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    className={`auth-mode-btn ${authMode === "createAccount" ? "active" : ""}`}
+                    onClick={() => setAuthMode("createAccount")}
+                  >
+                    Create Account
+                  </button>
+                </div>
+                <p className="auth-mode-note">
+                  {authMode === "signIn" ? "Use this if you already have an account." : "Use this if you are new and want to create a cloud account."}
+                </p>
+                <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" type="email" disabled={!hasSupabase} />
                 <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" disabled={!hasSupabase} />
-                <button className="cta-btn accent" onClick={signIn} disabled={!hasSupabase}>Sign In</button>
-                <button className="cta-btn secondary" onClick={signUp} disabled={!hasSupabase}>Create Account</button>
+                <button className="cta-btn accent" onClick={authMode === "signIn" ? signIn : signUp} disabled={!hasSupabase}>
+                  {authMode === "signIn" ? "Sign In" : "Create Account"}
+                </button>
+                <p className="muted small" style={{ textAlign: "center" }}>Need help? Enter your email and password, then tap the button above.</p>
               </div>
             ) : (
               <div className="auth-form">
@@ -1137,7 +1345,7 @@ export default function App() {
                 <button className="cta-btn secondary" onClick={signOut}>Sign Out</button>
               </div>
             )}
-            {message && <div className="banner" style={{ marginTop: 12 }}>{message}</div>}
+            {message && <div className={`banner banner-${messageTone}`} style={{ marginTop: 12 }}>{message}</div>}
           </div>
         )}
 
