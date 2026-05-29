@@ -4,6 +4,7 @@ import { useAuth } from "./context/AuthContext";
 import { SignInPromptModal } from "./components/Common/SignInPromptModal";
 import { DeleteConfirmModal } from "./components/Common/DeleteConfirmModal";
 import { OneRepMaxInfoModal } from "./components/Common/OneRepMaxInfoModal";
+import { MusclesScreen } from "./components/Muscles/MusclesScreen";
 import { Icons } from "./utils/icons";
 import {
   DEFAULT_TEMPLATES,
@@ -187,6 +188,66 @@ export default function App() {
     document.documentElement.style.colorScheme = theme;
     localStorage.setItem("gym-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!supabase || typeof window === "undefined") return;
+
+    const hash = window.location.hash || "";
+    const search = window.location.search || "";
+    const isVerificationCallback = hash.includes("access_token=") || hash.includes("refresh_token=") || hash.includes("type=signup") || search.includes("code=") || search.includes("token_hash=");
+
+    if (!isVerificationCallback) return;
+
+    let active = true;
+
+    async function finishVerificationFlow() {
+      try {
+        const { data: { session: urlSession }, error: urlError } = await supabase.auth.getSessionFromUrl({ storeSession: true });
+
+        if (!active) return;
+
+        if (urlError) {
+          const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
+          if (!active) return;
+          if (currentSession || !sessionError) {
+            window.history.replaceState({}, "", window.location.pathname);
+            showAuthMessage("Email verified successfully. You can now continue in the app.", "success");
+            setScreen("account");
+            return;
+          }
+          showAuthMessage("The verification link opened, but the session could not be completed. Please try again or sign in manually.", "error");
+          return;
+        }
+
+        if (urlSession) {
+          window.history.replaceState({}, "", window.location.pathname);
+          showAuthMessage("Email verified successfully. You can now continue in the app.", "success");
+          setScreen("account");
+          return;
+        }
+
+        const { data: { session: fallbackSession }, error: fallbackError } = await supabase.auth.getSession();
+        if (!active) return;
+        if (fallbackSession || !fallbackError) {
+          window.history.replaceState({}, "", window.location.pathname);
+          showAuthMessage("Email verified successfully. You can now continue in the app.", "success");
+          setScreen("account");
+          return;
+        }
+
+        showAuthMessage("The verification link opened, but the session could not be completed. Please try again or sign in manually.", "error");
+      } catch (error) {
+        if (!active) return;
+        showAuthMessage("The verification link opened, but the session could not be completed. Please try again or sign in manually.", "error");
+      }
+    }
+
+    finishVerificationFlow();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function hydrateFromCloud(options = {}) {
     const { silent = false } = options;
@@ -665,12 +726,17 @@ export default function App() {
     if (!validateAuthInput()) return;
 
     try {
-      const { error } = await supabase.auth.signUp({ email: email.trim(), password: password.trim() });
+      const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
+      const { error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: password.trim(),
+        options: redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+      });
       if (error) {
         handleAuthError(error, "Could not create your account.");
         return;
       }
-      showAuthMessage("Account created. Check your email inbox for the confirmation link before signing in.", "success");
+      showAuthMessage("Account created. Check your email inbox for the confirmation link. If the link opens a blank page, return here and sign in — your email should already be verified.", "success");
     } catch (error) {
       handleAuthError(error, "Could not create your account.");
     }
@@ -800,6 +866,7 @@ export default function App() {
     { id: "home", label: "Home", icon: Icons.home },
     { id: "calendar", label: "Calendar", icon: Icons.calendar },
     { id: "history", label: "History", icon: Icons.history },
+    { id: "muscles", label: "Muscles", icon: Icons.templates },
     { id: "templates", label: "Templates", icon: Icons.templates },
   ];
 
@@ -1172,6 +1239,8 @@ export default function App() {
         })()}
 
         {/* ── HISTORY ── */}
+        {screen === "muscles" && <MusclesScreen />}
+
         {screen === "history" && (
           <div className="screen">
             <div className="screen-header">

@@ -1,0 +1,169 @@
+/* ─── Path-based muscle hover / select states ─── */
+.muscle { cursor: pointer; }
+.muscle path.r {
+  fill: rgba(163,230,53,0.07);
+  stroke: rgba(163,230,53,0.32);
+  stroke-width: 1;
+  transition: fill 0.18s ease, stroke 0.18s ease, stroke-width 0.18s ease;
+}
+.muscle:hover path.r {
+  fill: rgba(163,230,53,0.18);
+  stroke: rgba(163,230,53,0.70);
+  stroke-width: 1.2;
+}
+.muscle.sel path.r {
+  fill: rgba(163,230,53,0.28);
+  stroke: #a3e635;
+  stroke-width: 1.5;
+  filter: drop-shadow(0 0 5px rgba(163,230,53,0.40));
+}
+.lbl { opacity: 0; transition: opacity 0.2s ease; pointer-events: none; }
+.muscle.sel .lbl { opacity: 1; }
+.base { pointer-events: none; }
+
+/* ─── Toggle row ─── */
+.muscle-toggle-row { display: flex; gap: 8px; margin-bottom: 14px; }
+.muscle-toggle-row .mini-action-btn { transition: background 0.15s, color 0.15s, border-color 0.15s; }
+.muscle-toggle-row .mini-action-btn.active { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+
+/* ─── Silhouette card ─── */
+.muscle-silhouette-card {
+  background: linear-gradient(180deg, rgba(15,23,42,0.90), rgba(15,23,42,0.60));
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: var(--radius-xl);
+  padding: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.muscle-silhouette { width: 100%; height: auto; display: block; border-radius: 18px; }
+
+/* ─── Section header row ─── */
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.section-header-row .section-title { margin-bottom: 0; }
+.muscle-count-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ─── Chip row ─── */
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.chip-btn {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 13px;
+  color: var(--text);
+  background: var(--elevated);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.chip-btn:hover { border-color: rgba(163, 230, 53, 0.35); }
+.chip-btn.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: rgba(163, 230, 53, 0.48);
+  font-weight: 600;
+}
+
+/* ─── Muscle detail card ─── */
+.muscle-detail-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 2px solid rgba(163, 230, 53, 0.42);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+}
+.muscle-detail-top {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 88px;
+  align-items: start;
+  margin-bottom: 14px;
+}
+.muscle-image {
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--elevated);
+  opacity: 0.9;
+}
+
+/* ─── Exercise list ─── */
+.exercise-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0 8px;
+  border-top: 1px solid var(--border);
+}
+.exercise-list { display: grid; gap: 6px; }
+.exercise-card {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--elevated);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.exercise-card:hover { border-color: rgba(163, 230, 53, 0.30); }
+.exercise-card.active {
+  border-color: rgba(163, 230, 53, 0.50);
+  background: var(--accent-dim);
+}
+.exercise-card strong { font-size: 13px; }
+
+/* ─── Exercise detail card ─── */
+.exercise-detail-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+.exercise-detail-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: var(--elevated);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  letter-spacing: 0.02em;
+}
+.tip-list {
+  padding-left: 18px;
+  color: var(--muted);
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.tip-list li::marker { color: var(--accent); }
