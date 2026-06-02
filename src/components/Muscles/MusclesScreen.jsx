@@ -101,16 +101,16 @@ export function MusclesScreen() {
           />
         </div>
 
-        <div className="exercise-list-header">
+        <div className="muscle-ex-list-header">
           <span className="muted small" style={{ fontWeight: 600 }}>Exercises</span>
           <span className="muted small">{selectedMuscle.exercises.length} total</span>
         </div>
 
-        <div className="exercise-list">
+        <div className="muscle-ex-list">
           {selectedMuscle.exercises.map((exercise) => (
             <button
               key={exercise.name}
-              className={`exercise-card ${selectedExercise.name === exercise.name ? "active" : ""}`}
+              className={`muscle-ex-card ${selectedExercise.name === exercise.name ? "active" : ""}`}
               onClick={() => setSelectedExerciseName(exercise.name)}
               type="button"
             >
@@ -123,10 +123,10 @@ export function MusclesScreen() {
 
       <div className="section">
         <h2 className="section-title">Exercise detail</h2>
-        <div className="exercise-detail-card">
+        <div className="muscle-ex-detail-card">
           <div className="exercise-detail-row">
-            <span className="badge">{selectedExercise.equipment}</span>
-            <span className="badge">Primary: {selectedExercise.primary}</span>
+            <span className="muscle-badge">{selectedExercise.equipment}</span>
+            <span className="muscle-badge">Primary: {selectedExercise.primary}</span>
           </div>
           <p className="muted small">Secondary: {selectedExercise.secondary}</p>
           <ul className="tip-list">

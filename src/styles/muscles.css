@@ -106,15 +106,15 @@
 }
 
 /* ─── Exercise list ─── */
-.exercise-list-header {
+.muscle-ex-list-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 0 8px;
   border-top: 1px solid var(--border);
 }
-.exercise-list { display: grid; gap: 6px; }
-.exercise-card {
+.muscle-ex-list { display: grid; gap: 6px; }
+.muscle-ex-card {
   width: 100%;
   display: flex;
   justify-content: space-between;
@@ -129,15 +129,15 @@
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
-.exercise-card:hover { border-color: rgba(163, 230, 53, 0.30); }
-.exercise-card.active {
+.muscle-ex-card:hover { border-color: rgba(163, 230, 53, 0.30); }
+.muscle-ex-card.active {
   border-color: rgba(163, 230, 53, 0.50);
   background: var(--accent-dim);
 }
-.exercise-card strong { font-size: 13px; }
+.muscle-ex-card strong { font-size: 13px; }
 
 /* ─── Exercise detail card ─── */
-.exercise-detail-card {
+.muscle-ex-detail-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -146,7 +146,7 @@
   gap: 10px;
 }
 .exercise-detail-row { display: flex; flex-wrap: wrap; gap: 8px; }
-.badge {
+.muscle-badge {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
