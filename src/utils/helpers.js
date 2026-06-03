@@ -116,7 +116,10 @@ export function mapWorkoutsFromRows(rows) {
       note: ex.note || "",
       sets:
         Array.isArray(ex.sets) && ex.sets.length
-          ? ex.sets
+          ? ex.sets.map((s) => ({
+              weight: s.weight ?? "",
+              reps: s.reps ?? "",
+            }))
           : [emptySet(), emptySet(), emptySet()],
     })),
   }));
