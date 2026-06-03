@@ -66,7 +66,14 @@ export default function App() {
   // Workout detail (from calendar/history)
   const [detailWorkoutId, setDetailWorkoutId] = useState(null);
   const [detailReturnScreen, setDetailReturnScreen] = useState("calendar");
-  const [editingWorkoutId, setEditingWorkoutId] = useState(null);
+  const [editingWorkoutId, setEditingWorkoutId] = useState(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return localStorage.getItem("gym-editing-workout-id");
+    } catch {
+      return null;
+    }
+  });
   const hasHydratedCloudRef = useRef(false);
   const [streakSettings, setStreakSettings] = useState(() => {
     if (typeof window === "undefined") return { enabled: false, target: 7, lastResetDate: null };
@@ -130,6 +137,14 @@ export default function App() {
   useEffect(() => { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule)); }, [schedule]);
 
   useEffect(() => {
+    if (editingWorkoutId) {
+      localStorage.setItem("gym-editing-workout-id", editingWorkoutId);
+    } else {
+      localStorage.removeItem("gym-editing-workout-id");
+    }
+  }, [editingWorkoutId]);
+
+  useEffect(() => {
     if (!isGuest && session?.user?.id) {
       const localState = loadLocalState();
       setState({
@@ -154,9 +169,8 @@ export default function App() {
       setState({
         templates: localState.templates.length ? localState.templates : DEFAULT_TEMPLATES,
         workouts: localState.workouts,
-        activeWorkout: localState.activeWorkout ?? null,
+        activeWorkout: null,
       });
-      if (localState.activeWorkout) setScreen("workout");
       setLoading(false);
       return;
     }
@@ -660,8 +674,8 @@ export default function App() {
           ...exercise,
           note: exercise.note || "",
           sets: exercise.sets.map((set) => ({
-            weight: set.weight ?? "",
-            reps: set.reps ?? "",
+            weight: String(set.weight ?? ""),
+            reps: String(set.reps ?? ""),
           })),
         })),
       },
