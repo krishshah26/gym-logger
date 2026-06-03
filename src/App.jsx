@@ -37,7 +37,7 @@ import {
 export default function App() {
   const { session, isGuest, loading: authLoading, startGuestMode, signOut: authSignOut } = useAuth();
   
-  const [state, setState] = useState(getDefaultState());
+  const [state, setState] = useState(() => loadLocalState());
   const [schedule, setSchedule] = useState({});
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -137,6 +137,7 @@ export default function App() {
         workouts: localState.workouts,
         activeWorkout: localState.activeWorkout ?? null,
       });
+      if (localState.activeWorkout) setScreen("workout");
       setLoading(false);
 
       if (!hasHydratedCloudRef.current) {
@@ -153,8 +154,9 @@ export default function App() {
       setState({
         templates: localState.templates.length ? localState.templates : DEFAULT_TEMPLATES,
         workouts: localState.workouts,
-        activeWorkout: null,
+        activeWorkout: localState.activeWorkout ?? null,
       });
+      if (localState.activeWorkout) setScreen("workout");
       setLoading(false);
       return;
     }
@@ -265,10 +267,13 @@ export default function App() {
     
     const storedLocalState = loadStoredLocalState();
     const localState = loadLocalState();
-    const draftWorkout = storedLocalState?.activeWorkout ?? null;
     const cloudTemplates = templateRows?.length ? mapTemplatesFromRows(templateRows) : [];
     const cloudWorkouts = workoutRows?.length ? mapWorkoutsFromRows(workoutRows) : [];
-    const shouldMigrate = hasLocalDataToMigrate(storedLocalState);
+
+    // Only migrate if there are local workouts/templates genuinely not yet in the cloud.
+    const cloudWorkoutIds = new Set(cloudWorkouts.map(w => w.id));
+    const hasLocalOnlyWorkouts = (storedLocalState?.workouts ?? []).some(w => !cloudWorkoutIds.has(w.id));
+    const shouldMigrate = hasLocalOnlyWorkouts || hasLocalDataToMigrate(storedLocalState && { ...storedLocalState, workouts: [] });
 
     if (shouldMigrate) {
       setMessage("Importing your local data to cloud...");
@@ -288,20 +293,30 @@ export default function App() {
       const migratedTemplates = updatedTemplateRows?.length ? mapTemplatesFromRows(updatedTemplateRows) : DEFAULT_TEMPLATES;
       const migratedWorkouts = updatedWorkoutRows?.length ? mapWorkoutsFromRows(updatedWorkoutRows) : [];
 
-      setState({
-        templates: migratedTemplates,
-        workouts: migratedWorkouts,
-        activeWorkout: draftWorkout,
+      setState((prev) => {
+        const migratedIds = new Set(migratedWorkouts.map(w => w.id));
+        const pendingLocal = prev.workouts.filter(w => !migratedIds.has(w.id));
+        return {
+          templates: migratedTemplates,
+          workouts: [...migratedWorkouts, ...pendingLocal],
+          activeWorkout: prev.activeWorkout,
+        };
       });
 
       if (templatesCount > 0 || workoutsCount > 0) {
         setMessage(`✓ Imported ${workoutsCount} workout${workoutsCount !== 1 ? 's' : ''} and ${templatesCount} template${templatesCount !== 1 ? 's' : ''}`);
+      } else {
+        setMessage("");
       }
     } else {
-      setState({
-        templates: cloudTemplates.length ? cloudTemplates : DEFAULT_TEMPLATES,
-        workouts: cloudWorkouts.length ? cloudWorkouts : [],
-        activeWorkout: draftWorkout,
+      setState((prev) => {
+        const cloudIds = new Set(cloudWorkouts.map(w => w.id));
+        const pendingLocal = prev.workouts.filter(w => !cloudIds.has(w.id));
+        return {
+          templates: cloudTemplates.length ? cloudTemplates : DEFAULT_TEMPLATES,
+          workouts: cloudWorkouts.length ? [...cloudWorkouts, ...pendingLocal] : prev.workouts,
+          activeWorkout: prev.activeWorkout,
+        };
       });
     }
     
